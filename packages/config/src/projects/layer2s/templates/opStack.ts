@@ -6,6 +6,8 @@ import {
   UnixTime,
   formatSeconds,
 } from '@l2beat/shared-pure'
+import { BigNumber } from 'ethers'
+import { formatEther } from 'ethers/lib/utils'
 import { ethereum } from '../../../chains/ethereum'
 import {
   CONTRACTS,
@@ -65,8 +67,6 @@ import type {
 } from '../types'
 import { generateDiscoveryDrivenSections } from './generateDiscoveryDrivenSections'
 import { explorerReferences, mergeBadges, safeGetImplementation } from './utils'
-import { formatEther } from 'ethers/lib/utils'
-import { BigNumber } from 'ethers'
 
 export const CELESTIA_DA_PROVIDER: DAProvider = {
   layer: DA_LAYERS.CELESTIA,
@@ -892,7 +892,6 @@ function getTechnology(
     }>('SystemConfig', 'opStackDA').isSequencerSendingBlobTx
 
   // TODO(radomski): state validation part should be the same as it is for Optimism right now, including warning and references
-  // TODO(radomski): Regular exits should look like Optimism
   return {
     stateCorrectness: templateVars.nonTemplateTechnology?.stateCorrectness ?? {
       name: 'Fraud proofs are not enabled',
@@ -958,8 +957,44 @@ function getTechnology(
         ]),
       ],
     },
-    exitMechanisms: templateVars.nonTemplateTechnology?.exitMechanisms ?? [
+    exitMechanisms: getTechnologyExitMechanism(templateVars, explorerUrl),
+    otherConsiderations: templateVars.nonTemplateTechnology
+      ?.otherConsiderations ?? [
       {
+        name: 'EVM compatible smart contracts are supported',
+        description:
+          'OP stack chains are pursuing the EVM Equivalence model. No changes to smart contracts are required regardless of the language they are written in, i.e. anything deployed on L1 can be deployed on L2.',
+        risks: [],
+        references: [
+          {
+            text: 'Introducing EVM Equivalence',
+            href: 'https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306',
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function getTechnologyExitMechanism(
+  templateVars: OpStackConfigCommon,
+  explorerUrl: string | undefined,
+): ScalingProjectTechnologyChoice[] {
+  if (templateVars.nonTemplateTechnology?.exitMechanisms !== undefined) {
+    return templateVars.nonTemplateTechnology.exitMechanisms
+  }
+
+  const result: ScalingProjectTechnologyChoice[] = []
+
+  const portal = getOptimismPortal(templateVars)
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+
+      result.push({
         ...EXITS.REGULAR(
           'optimistic',
           'merkle proof',
@@ -983,33 +1018,73 @@ function getTechnology(
           },
         ]),
         risks: [EXITS.RISK_CENTRALIZED_VALIDATOR],
-      },
-      {
-        ...EXITS.FORCED('all-withdrawals'),
-        references: [
-          {
-            text: 'Forced withdrawal from an OP Stack blockchain',
-            href: 'https://stack.optimism.io/docs/security/forced-withdrawal/',
-          },
-        ],
-      },
-    ],
-    otherConsiderations: templateVars.nonTemplateTechnology
-      ?.otherConsiderations ?? [
-      {
-        name: 'EVM compatible smart contracts are supported',
-        description:
-          'OP stack chains are pursuing the EVM Equivalence model. No changes to smart contracts are required regardless of the language they are written in, i.e. anything deployed on L1 can be deployed on L2.',
+      })
+      break
+    }
+    case 'Permissioned':
+    case 'Permissionless': {
+      const disputeGameFinalityDelaySeconds =
+        templateVars.discovery.getContractValue<number>(
+          portal.name,
+          'disputeGameFinalityDelaySeconds',
+        )
+
+      const proofMaturityDelaySeconds =
+        templateVars.discovery.getContractValue<number>(
+          portal.name,
+          'proofMaturityDelaySeconds',
+        )
+
+      const disputeGameName =
+        fraudProofType === 'Permissionless'
+          ? 'FaultDisputeGame'
+          : 'PermissionedDisputeGame'
+
+      const maxClockDuration = templateVars.discovery.getContractValue<number>(
+        disputeGameName,
+        'maxClockDuration',
+      )
+
+      result.push({
+        name: 'Regular exits',
+        description: `The user initiates the withdrawal by submitting a regular transaction on this chain. When a state root containing such transaction is settled, the funds become available for withdrawal on L1 after ${formatSeconds(
+          disputeGameFinalityDelaySeconds,
+        )}. Withdrawal inclusion can be proven before state root settlement, but a ${formatSeconds(
+          proofMaturityDelaySeconds,
+        )} period has to pass before it becomes actionable. The process of state root settlement takes a challenge period of at least ${formatSeconds(
+          maxClockDuration,
+        )} to complete. Finally the user submits an L1 transaction to claim the funds. This transaction requires a merkle proof.`,
         risks: [],
         references: [
           {
-            text: 'Introducing EVM Equivalence',
-            href: 'https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306',
+            text: 'OptimismPortal.sol - Etherscan source code, proveWithdrawalTransaction function',
+            href: `https://etherscan.io/address/${safeGetImplementation(
+              portal,
+            )}#code`,
+          },
+          {
+            text: 'OptimismPortal.sol - Etherscan source code, finalizeWithdrawalTransaction function',
+            href: `https://etherscan.io/address/${safeGetImplementation(
+              portal,
+            )}#code`,
           },
         ],
+      })
+      break
+    }
+  }
+
+  result.push({
+    ...EXITS.FORCED('all-withdrawals'),
+    references: [
+      {
+        text: 'Forced withdrawal from an OP Stack blockchain',
+        href: 'https://stack.optimism.io/docs/security/forced-withdrawal/',
       },
     ],
-  }
+  })
+
+  return result
 }
 
 function decideDA(
