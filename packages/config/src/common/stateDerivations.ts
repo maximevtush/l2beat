@@ -8,6 +8,7 @@ type SupportedOPStackChains =
   | 'MODE'
   | 'LISK'
   | 'HASHKEY'
+  | 'SONEIUM'
 type OPStackInfo = [string, string] // [config, genesis file]
 
 const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
@@ -29,15 +30,19 @@ const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
   ],
   MODE: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/mode.toml',
-    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/mode.json.gz',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/mode.json.zst',
   ],
   LISK: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/lisk.toml',
-    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/lisk.json.gz',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/lisk.json.zst',
   ],
   HASHKEY: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/hashkeychain.toml',
-    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/hashkeychain.json.gz',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/hashkeychain.json.zst',
+  ],
+  SONEIUM: [
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/soneium.toml',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/soneium.json.zst',
   ],
 }
 
