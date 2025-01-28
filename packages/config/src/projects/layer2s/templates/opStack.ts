@@ -600,8 +600,13 @@ function computedStage(
     return { stage: 'NotApplicable' }
   }
 
-  // TODO(radomski): proof system requirement should be checked as met (A complete and functional proof system is deployed.
-  // TODO(radomski): external actors submitting proofs requirement should be checked (There are at least 5 external actors who can submit fraud proofs.
+  const fraudProofType = getFraudProofType(templateVars)
+  const fraudProofMapping: Record<FraudProofType, boolean | null> = {
+    None: null,
+    Permissioned: false,
+    Permissionless: true,
+  }
+
   return getStage(
     {
       stage0: {
@@ -611,8 +616,8 @@ function computedStage(
         rollupNodeSourceAvailable: templateVars.isNodeAvailable,
       },
       stage1: {
-        stateVerificationOnL1: false,
-        fraudProofSystemAtLeast5Outsiders: null,
+        stateVerificationOnL1: fraudProofType !== 'None',
+        fraudProofSystemAtLeast5Outsiders: fraudProofMapping[fraudProofType],
         usersHave7DaysToExit: false,
         usersCanExitWithoutCooperation: false,
         securityCouncilProperlySetUp:
@@ -620,7 +625,7 @@ function computedStage(
       },
       stage2: {
         proofSystemOverriddenOnlyInCaseOfABug: null,
-        fraudProofSystemIsPermissionless: null,
+        fraudProofSystemIsPermissionless: fraudProofMapping[fraudProofType],
         delayWith30DExitWindow: false,
       },
     },
