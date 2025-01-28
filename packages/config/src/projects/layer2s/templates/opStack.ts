@@ -822,7 +822,7 @@ function getTechnology(
         ...explorerReferences(explorerUrl, [
           { text: 'BatchInbox - address', address: sequencerInbox },
           {
-            text: 'OptimismPortal.sol - source code, depositTransaction function',
+            text: `${portal.name}.sol - source code, depositTransaction function`,
             address: safeGetImplementation(portal),
           },
         ]),
@@ -839,7 +839,7 @@ function getTechnology(
         },
         ...explorerReferences(explorerUrl, [
           {
-            text: 'OptimismPortal.sol - source code, depositTransaction function',
+            text: `${portal.name}.sol - source code, depositTransaction function`,
             address: safeGetImplementation(portal),
           },
         ]),
@@ -1018,11 +1018,11 @@ function getTechnologyExitMechanism(
         ),
         references: explorerReferences(explorerUrl, [
           {
-            text: 'OptimismPortal.sol - source code, proveWithdrawalTransaction function',
+            text: `${portal.name}.sol - source code, proveWithdrawalTransaction function`,
             address: safeGetImplementation(portal),
           },
           {
-            text: 'OptimismPortal.sol - source code, finalizeWithdrawalTransaction function',
+            text: `${portal.name}.sol - source code, finalizeWithdrawalTransaction function`,
             address: safeGetImplementation(portal),
           },
           {
@@ -1070,13 +1070,13 @@ function getTechnologyExitMechanism(
         risks: [],
         references: [
           {
-            text: 'OptimismPortal.sol - Etherscan source code, proveWithdrawalTransaction function',
+            text: `${portal.name}.sol - Etherscan source code, proveWithdrawalTransaction function`,
             href: `https://etherscan.io/address/${safeGetImplementation(
               portal,
             )}#code`,
           },
           {
-            text: 'OptimismPortal.sol - Etherscan source code, finalizeWithdrawalTransaction function',
+            text: `${portal.name}.sol - Etherscan source code, finalizeWithdrawalTransaction function`,
             href: `https://etherscan.io/address/${safeGetImplementation(
               portal,
             )}#code`,
