@@ -1,5 +1,5 @@
 import { UnixTime } from '@l2beat/shared-pure'
-import { REASON_FOR_BEING_OTHER } from '../../common'
+import { DERIVATION, REASON_FOR_BEING_OTHER } from '../../common'
 import { ProjectDiscovery } from '../../discovery/ProjectDiscovery'
 import { Badge } from '../badges'
 import { opStackL2 } from './templates/opStack'
@@ -42,5 +42,6 @@ export const arenaz = opStackL2({
   },
   genesisTimestamp,
   discoveryDrivenData: true,
+  stateDerivation: DERIVATION.OPSTACK('ARENAZ'),
   isNodeAvailable: 'UnderReview',
 })

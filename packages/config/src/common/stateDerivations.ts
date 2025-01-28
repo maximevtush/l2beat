@@ -8,6 +8,7 @@ type SupportedOPStackChains =
   | 'MODE'
   | 'LISK'
   | 'HASHKEY'
+  | 'ARENAZ'
   | 'SONEIUM'
 type OPStackInfo = [string, string] // [config, genesis file]
 
@@ -39,6 +40,10 @@ const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
   HASHKEY: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/hashkeychain.toml',
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/hashkeychain.json.zst',
+  ],
+  ARENAZ: [
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/arena-z.toml',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/arena-z.json.zst',
   ],
   SONEIUM: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/soneium.toml',
