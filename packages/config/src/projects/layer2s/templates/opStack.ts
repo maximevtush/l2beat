@@ -46,6 +46,7 @@ import type {
   ScalingProjectRiskView,
   ScalingProjectRiskViewEntry,
   ScalingProjectStateDerivation,
+  ScalingProjectStateValidation,
   ScalingProjectTechnology,
   ScalingProjectTechnologyChoice,
   ScalingProjectTransactionApi,
@@ -64,6 +65,8 @@ import type {
 } from '../types'
 import { generateDiscoveryDrivenSections } from './generateDiscoveryDrivenSections'
 import { explorerReferences, mergeBadges, safeGetImplementation } from './utils'
+import { formatEther } from 'ethers/lib/utils'
+import { BigNumber } from 'ethers'
 
 export const CELESTIA_DA_PROVIDER: DAProvider = {
   layer: DA_LAYERS.CELESTIA,
@@ -111,6 +114,7 @@ interface DAProvider {
 
 interface OpStackConfigCommon {
   architectureImage?: string
+  stateValidationImage?: string
   isArchived?: true
   createdAt: UnixTime
   daProvider?: DAProvider
@@ -131,6 +135,7 @@ interface OpStackConfigCommon {
   l2OutputOracle?: ContractParameters
   portal?: ContractParameters
   stateDerivation?: ScalingProjectStateDerivation
+  stateValidation?: ScalingProjectStateValidation
   milestones?: Milestone[]
   knowledgeNuggets?: KnowledgeNugget[]
   roleOverrides?: Record<string, string>
@@ -183,7 +188,12 @@ function opStackCommon(
 ): Omit<ScalingProject, 'type' | 'display'> & {
   display: Pick<
     ScalingProjectDisplay,
-    'architectureImage' | 'purposes' | 'provider' | 'category' | 'warning'
+    | 'stateValidationImage'
+    | 'architectureImage'
+    | 'purposes'
+    | 'provider'
+    | 'category'
+    | 'warning'
   >
 } {
   const nativeContractRisks = [CONTRACTS.UPGRADE_NO_DELAY_RISK]
@@ -243,6 +253,7 @@ function opStackCommon(
   // archi images defined locally in the project.ts take precedence over this one
   const architectureImage = `opstack-${postsToEthereum ? 'rollup' : 'optimium'}${templateVars.discovery.hasContract('SuperchainConfig') ? '-superchain' : ''}`
 
+  const fraudProofType = getFraudProofType(templateVars)
   return {
     isArchived: templateVars.isArchived,
     id: ProjectId(templateVars.discovery.projectName),
@@ -251,6 +262,11 @@ function opStackCommon(
     display: {
       purposes: ['Universal', ...(templateVars.additionalPurposes ?? [])],
       architectureImage: templateVars.architectureImage ?? architectureImage,
+      stateValidationImage:
+        (templateVars.stateValidationImage ??
+        fraudProofType === 'Permissionless')
+          ? 'opfp'
+          : undefined,
       provider: 'OP Stack',
       category:
         templateVars.display.category ??
@@ -347,6 +363,7 @@ function opStackCommon(
     dataAvailabilitySolution: templateVars.dataAvailabilitySolution,
     reasonsForBeingOther: templateVars.reasonsForBeingOther,
     stateDerivation: templateVars.stateDerivation,
+    stateValidation: getStateValidation(templateVars),
     riskView:
       templateVars.riskView ?? getRiskView(templateVars, daProvider, portal),
     stage: templateVars.stage ?? computedStage(templateVars, postsToEthereum),
@@ -491,6 +508,221 @@ export function opStackL3(templateVars: OpStackConfigL3): Layer3 {
     hostChain: templateVars.hostChain,
     display: { ...common.display, ...templateVars.display },
     stackedRiskView: templateVars.stackedRiskView ?? stackedRisk,
+  }
+}
+
+// TODO(radomski): Clean up
+function getStateValidation(
+  templateVars: OpStackConfigCommon,
+): ScalingProjectStateValidation | undefined {
+  if (templateVars.stateValidation !== undefined) {
+    return templateVars.stateValidation
+  }
+
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None':
+      return undefined
+    case 'Permissioned': {
+      const maxClockDuration = templateVars.discovery.getContractValue<number>(
+        'PermissionedDisputeGame',
+        'maxClockDuration',
+      )
+
+      const permissionedDisputeGameBonds =
+        templateVars.discovery.getContractValue<number[]>(
+          'DisputeGameFactory',
+          'initBonds',
+        )[1] // 1 is for permissioned games!
+
+      const permissionedGameClockExtension =
+        templateVars.discovery.getContractValue<number>(
+          'PermissionedDisputeGame',
+          'clockExtension',
+        )
+
+      const exponentialBondsFactor = 1.09493 // hardcoded, from https://specs.optimism.io/fault-proof/stage-one/bond-incentives.html?highlight=1.09493#bond-scaling
+
+      const permissionedGameMaxDepth =
+        templateVars.discovery.getContractValue<number>(
+          'PermissionedDisputeGame',
+          'maxGameDepth',
+        )
+
+      const permissionedGameSplitDepth =
+        templateVars.discovery.getContractValue<number>(
+          'PermissionedDisputeGame',
+          'splitDepth',
+        )
+
+      const permissionedGameFullCost = (() => {
+        let cost = 0
+        const scaleFactor = 100000
+        for (let i = 0; i <= permissionedGameMaxDepth; i++) {
+          cost =
+            cost +
+            (permissionedDisputeGameBonds / scaleFactor) *
+              exponentialBondsFactor ** i
+        }
+        return BigNumber.from(cost).mul(BigNumber.from(scaleFactor))
+      })()
+
+      const oracleChallengePeriod =
+        templateVars.discovery.getContractValue<number>(
+          'PreimageOracle',
+          'challengePeriod',
+        )
+
+      const permissionedGameMaxClockExtension =
+        permissionedGameClockExtension * 2 + // at SPLIT_DEPTH - 1
+        oracleChallengePeriod + // at MAX_GAME_DEPTH - 1
+        permissionedGameClockExtension * (permissionedGameMaxDepth - 3) // the rest, excluding also the last depth
+      return {
+        // NOTE THAT DESCRIPTIONS ARE SLIGHTLY MODIFIED BECAUSE PERMISSIONED
+        description:
+          'Currently, updates to the system state can only be proposed and challenged by the same entity as the proof system is permissioned. If a state root passes the challenge period, it is optimistically considered correct and made actionable for withdrawals.',
+        categories: [
+          {
+            title: 'State root proposals',
+            description: `Proposers submit state roots as children of the latest confirmed state root (called anchor state), by calling the \`create\` function in the DisputeGameFactory. A state root can have multiple conflicting children. Each proposal requires a stake, currently set to ${formatEther(
+              permissionedDisputeGameBonds,
+            )} ETH, that can be slashed if the proposal is proven incorrect via a fraud proof. Stakes can be withdrawn only after the proposal has been confirmed. A state root gets confirmed if the challenge period has passed and it is not countered.`,
+            references: [
+              {
+                text: 'OP stack specification: Fault Dispute Game',
+                href: 'https://specs.optimism.io/fault-proof/stage-one/fault-dispute-game.html#fault-dispute-game',
+              },
+            ],
+          },
+          {
+            title: 'Challenges',
+            description: `Challenges are opened to disprove invalid state roots using bisection games. Each bisection move requires a stake that increases expontentially with the depth of the bisection, with a factor of ${exponentialBondsFactor}. The maximum depth is ${permissionedGameMaxDepth}, and reaching it therefore requires a cumulative stake of ${parseFloat(
+              formatEther(permissionedGameFullCost),
+            ).toFixed(
+              2,
+            )} ETH from depth 0. Actors can participate in any challenge by calling the \`defend\` or \`attack\` functions, depending whether they agree or disagree with the latest claim and want to move the bisection game forward. Actors that disagree with the top-level claim are called challengers, and actors that agree are called defenders. Each actor might be involved in multiple (sub-)challenges at the same time, meaning that the protocol operates with [full concurrency](https://medium.com/l2beat/fraud-proof-wars-b0cb4d0f452a). Challengers and defenders alternate in the bisection game, and they pass each other a clock that starts with ${formatSeconds(
+              maxClockDuration,
+            )}. If a clock expires, the claim is considered defeated if it was countered, or it gets confirmed if uncountered. Since honest parties can inherit clocks from malicious parties that play both as challengers and defenders (see [freeloader claims](https://specs.optimism.io/fault-proof/stage-one/fault-dispute-game.html#freeloader-claims)), if a clock gets inherited with less than ${formatSeconds(
+              permissionedGameClockExtension,
+            )}, it generally gets extended by ${formatSeconds(
+              permissionedGameClockExtension,
+            )} with the exception of ${formatSeconds(
+              permissionedGameClockExtension * 2,
+            )} right before depth ${permissionedGameSplitDepth}, and ${formatSeconds(
+              oracleChallengePeriod,
+            )} right before the last depth. The maximum clock extension that a top level claim can get is therefore ${formatSeconds(
+              permissionedGameMaxClockExtension,
+            )}. Since unconfirmed state roots are independent of one another, users can decide to exit with a subsequent confirmed state root if the previous one is delayed. Winners get the entire losers' stake, meaning that sybils can potentially play against each other at no cost. The final instruction found via the bisection game is then executed onchain in the MIPS one step prover contract who determines the winner. The protocol does not enforce valid bisections, meaning that actors can propose correct initial claims and then provide incorrect midpoints. The protocol can be subject to resource exhaustion attacks ([Spearbit 5.1.3](https://github.com/ethereum-optimism/optimism/blob/develop/docs/security-reviews/2024_08_report-cb-fault-proofs-non-mips.pdf)).`,
+            references: [
+              {
+                text: 'Fraud Proof Wars: OPFP',
+                href: 'https://medium.com/l2beat/fraud-proof-wars-b0cb4d0f452a',
+              },
+            ],
+          },
+        ],
+      }
+    }
+    case 'Permissionless': {
+      const permissionlessDisputeGameBonds =
+        templateVars.discovery.getContractValue<number[]>(
+          'DisputeGameFactory',
+          'initBonds',
+        )[0] // 0 is for permissionless games!
+
+      const exponentialBondsFactor = 1.09493 // hardcoded, from https://specs.optimism.io/fault-proof/stage-one/bond-incentives.html?highlight=1.09493#bond-scaling
+
+      const maxClockDuration = templateVars.discovery.getContractValue<number>(
+        'PermissionedDisputeGame',
+        'maxClockDuration',
+      )
+
+      const permissionlessGameMaxDepth =
+        templateVars.discovery.getContractValue<number>(
+          'FaultDisputeGame',
+          'maxGameDepth',
+        )
+
+      const permissionlessGameSplitDepth =
+        templateVars.discovery.getContractValue<number>(
+          'FaultDisputeGame',
+          'splitDepth',
+        )
+
+      const permissionlessGameClockExtension =
+        templateVars.discovery.getContractValue<number>(
+          'PermissionedDisputeGame',
+          'clockExtension',
+        )
+
+      const oracleChallengePeriod =
+        templateVars.discovery.getContractValue<number>(
+          'PreimageOracle',
+          'challengePeriod',
+        )
+
+      const permissionlessGameMaxClockExtension =
+        permissionlessGameClockExtension * 2 + // at SPLIT_DEPTH - 1
+        oracleChallengePeriod + // at MAX_GAME_DEPTH - 1
+        permissionlessGameClockExtension * (permissionlessGameMaxDepth - 3) // the rest, excluding also the last depth
+
+      const permissionlessGameFullCost = (() => {
+        let cost = 0
+        const scaleFactor = 100000
+        for (let i = 0; i <= permissionlessGameMaxDepth; i++) {
+          cost =
+            cost +
+            (permissionlessDisputeGameBonds / scaleFactor) *
+              exponentialBondsFactor ** i
+        }
+        return BigNumber.from(cost).mul(BigNumber.from(scaleFactor))
+      })()
+
+      return {
+        description:
+          'Updates to the system state can be proposed and challenged by anyone who has sufficient funds. If a state root passes the challenge period, it is optimistically considered correct and made actionable for withdrawals.',
+        categories: [
+          {
+            title: 'State root proposals',
+            description: `Proposers submit state roots as children of the latest confirmed state root (called anchor state), by calling the \`create\` function in the DisputeGameFactory. A state root can have multiple conflicting children. Each proposal requires a stake, currently set to ${formatEther(
+              permissionlessDisputeGameBonds,
+            )} ETH, that can be slashed if the proposal is proven incorrect via a fraud proof. Stakes can be withdrawn only after the proposal has been confirmed. A state root gets confirmed if the challenge period has passed and it is not countered.`,
+            references: [
+              {
+                text: 'OP stack specification: Fault Dispute Game',
+                href: 'https://specs.optimism.io/fault-proof/stage-one/fault-dispute-game.html#fault-dispute-game',
+              },
+            ],
+          },
+          {
+            title: 'Challenges',
+            description: `Challenges are opened to disprove invalid state roots using bisection games. Each bisection move requires a stake that increases expontentially with the depth of the bisection, with a factor of ${exponentialBondsFactor}. The maximum depth is ${permissionlessGameMaxDepth}, and reaching it therefore requires a cumulative stake of ${parseFloat(
+              formatEther(permissionlessGameFullCost),
+            ).toFixed(
+              2,
+            )} ETH from depth 0. Actors can participate in any challenge by calling the \`defend\` or \`attack\` functions, depending whether they agree or disagree with the latest claim and want to move the bisection game forward. Actors that disagree with the top-level claim are called challengers, and actors that agree are called defenders. Each actor might be involved in multiple (sub-)challenges at the same time, meaning that the protocol operates with [full concurrency](https://medium.com/l2beat/fraud-proof-wars-b0cb4d0f452a). Challengers and defenders alternate in the bisection game, and they pass each other a clock that starts with ${formatSeconds(
+              maxClockDuration,
+            )}. If a clock expires, the claim is considered defeated if it was countered, or it gets confirmed if uncountered. Since honest parties can inherit clocks from malicious parties that play both as challengers and defenders (see [freeloader claims](https://specs.optimism.io/fault-proof/stage-one/fault-dispute-game.html#freeloader-claims)), if a clock gets inherited with less than ${formatSeconds(
+              permissionlessGameClockExtension,
+            )}, it generally gets extended by ${formatSeconds(
+              permissionlessGameClockExtension,
+            )} with the exception of ${formatSeconds(
+              permissionlessGameClockExtension * 2,
+            )} right before depth ${permissionlessGameSplitDepth}, and ${formatSeconds(
+              oracleChallengePeriod,
+            )} right before the last depth. The maximum clock extension that a top level claim can get is therefore ${formatSeconds(
+              permissionlessGameMaxClockExtension,
+            )}. Since unconfirmed state roots are independent of one another, users can decide to exit with a subsequent confirmed state root if the previous one is delayed. Winners get the entire losers' stake, meaning that sybils can potentially play against each other at no cost. The final instruction found via the bisection game is then executed onchain in the MIPS one step prover contract who determines the winner. The protocol does not enforce valid bisections, meaning that actors can propose correct initial claims and then provide incorrect midpoints. The protocol can be subject to resource exhaustion attacks ([Spearbit 5.1.3](https://github.com/ethereum-optimism/optimism/blob/develop/docs/security-reviews/2024_08_Fault-Proofs-No-MIPS_Spearbit.pdf)).`,
+            references: [
+              {
+                text: 'Fraud Proof Wars: OPFP',
+                href: 'https://medium.com/l2beat/fraud-proof-wars-b0cb4d0f452a',
+              },
+            ],
+          },
+        ],
+      }
+    }
   }
 }
 
@@ -660,7 +892,6 @@ function getTechnology(
     }>('SystemConfig', 'opStackDA').isSequencerSendingBlobTx
 
   // TODO(radomski): state validation part should be the same as it is for Optimism right now, including warning and references
-  // TODO(radomski): There should be a State validation section, the same as for Optimism, including the diagram
   // TODO(radomski): Regular exits should look like Optimism
   return {
     stateCorrectness: templateVars.nonTemplateTechnology?.stateCorrectness ?? {
