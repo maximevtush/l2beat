@@ -1309,9 +1309,9 @@ function getFraudProofType(templateVars: OpStackConfigCommon): FraudProofType {
   )
 
   if (respectedGameType === 0) {
-    return 'Permissioned'
-  } else if (respectedGameType === 1) {
     return 'Permissionless'
+  } else if (respectedGameType === 1) {
+    return 'Permissioned'
   } else {
     throw new Error(`Unexpected respectedGameType = ${respectedGameType}`)
   }

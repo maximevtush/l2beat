@@ -7,6 +7,7 @@ type SupportedOPStackChains =
   | 'PGN'
   | 'MODE'
   | 'LISK'
+  | 'HASHKEY'
 type OPStackInfo = [string, string] // [config, genesis file]
 
 const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
@@ -34,6 +35,10 @@ const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/lisk.toml',
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/lisk.json.gz',
   ],
+  HASHKEY: [
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/hashkeychain.toml',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/hashkeychain.json.gz',
+  ]
 }
 
 function OPSTACK(chain: SupportedOPStackChains): ScalingProjectStateDerivation {
