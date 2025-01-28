@@ -795,15 +795,31 @@ function getRiskViewExitWindow(
 ): ScalingProjectRiskViewEntry {
   const portal = getOptimismPortal(templateVars)
 
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
+  let FINALIZATION_PERIOD_SECONDS: number = 0
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
 
-  const FINALIZATION_PERIOD_SECONDS: number =
-    templateVars.discovery.getContractValue<number>(
-      l2OutputOracle.name,
-      'FINALIZATION_PERIOD_SECONDS',
-    )
+      FINALIZATION_PERIOD_SECONDS =
+        templateVars.discovery.getContractValue<number>(
+          l2OutputOracle.name,
+          'FINALIZATION_PERIOD_SECONDS',
+        )
+      break
+    }
+    case 'Permissioned':
+    case 'Permissionless': {
+      FINALIZATION_PERIOD_SECONDS =
+        templateVars.discovery.getContractValue<number>(
+          'OptimismPortal2',
+          'proofMaturityDelaySeconds',
+        )
+      break
+    }
+  }
 
   return {
     ...RISK_VIEW.EXIT_WINDOW(0, FINALIZATION_PERIOD_SECONDS),
@@ -881,9 +897,6 @@ function getTechnology(
   )
 
   const portal = getOptimismPortal(templateVars)
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
 
   const usesBlobs =
     templateVars.usesBlobs ??
@@ -910,19 +923,7 @@ function getTechnology(
         ]),
       ],
     },
-    operator: templateVars.nonTemplateTechnology?.operator ?? {
-      ...OPERATOR.CENTRALIZED_OPERATOR,
-      references: explorerReferences(explorerUrl, [
-        {
-          text: 'L2OutputOracle.sol - source code, CHALLENGER address',
-          address: safeGetImplementation(l2OutputOracle),
-        },
-        {
-          text: 'L2OutputOracle.sol - source code, PROPOSER address',
-          address: safeGetImplementation(l2OutputOracle),
-        },
-      ]),
-    },
+    operator: getTechnologyOperator(templateVars, explorerUrl),
     forceTransactions: templateVars.nonTemplateTechnology
       ?.forceTransactions ?? {
       ...FORCE_TRANSACTIONS.CANONICAL_ORDERING('smart contract'),
@@ -955,6 +956,41 @@ function getTechnology(
         ],
       },
     ],
+  }
+}
+
+function getTechnologyOperator(
+  templateVars: OpStackConfigCommon,
+  explorerUrl: string | undefined,
+): ScalingProjectTechnologyChoice | undefined {
+  if (templateVars.nonTemplateTechnology?.operator !== undefined) {
+    return templateVars.nonTemplateTechnology.operator
+  }
+
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+
+      return {
+        ...OPERATOR.CENTRALIZED_OPERATOR,
+        references: explorerReferences(explorerUrl, [
+          {
+            text: 'L2OutputOracle.sol - source code, CHALLENGER address',
+            address: safeGetImplementation(l2OutputOracle),
+          },
+          {
+            text: 'L2OutputOracle.sol - source code, PROPOSER address',
+            address: safeGetImplementation(l2OutputOracle),
+          },
+        ]),
+      }
+    }
+    case 'Permissioned':
+    case 'Permissionless':
+      return OPERATOR.CENTRALIZED_OPERATOR
   }
 }
 
