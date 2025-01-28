@@ -63,7 +63,9 @@ import type {
   Layer2,
   Layer2Display,
   Layer2FinalityConfig,
+  Layer2FinalityDisplay,
   Layer2TxConfig,
+  ProjectLivenessInfo,
 } from '../types'
 import { generateDiscoveryDrivenSections } from './generateDiscoveryDrivenSections'
 import { explorerReferences, mergeBadges, safeGetImplementation } from './utils'
@@ -372,23 +374,6 @@ function opStackCommon(
 }
 
 export function opStackL2(templateVars: OpStackConfigL2): Layer2 {
-  const sequencerInbox = EthereumAddress(
-    templateVars.discovery.getContractValue('SystemConfig', 'sequencerInbox'),
-  )
-  const sequencerAddress = EthereumAddress(
-    templateVars.discovery.getContractValue('SystemConfig', 'batcherHash'),
-  )
-
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
-
-  const FINALIZATION_PERIOD_SECONDS =
-    templateVars.discovery.getContractValue<number>(
-      l2OutputOracle.address,
-      'FINALIZATION_PERIOD_SECONDS',
-    )
-
   const common = opStackCommon('layer2', templateVars, ethereum.explorerUrl)
   return {
     type: 'layer2',
@@ -397,65 +382,12 @@ export function opStackL2(templateVars: OpStackConfigL2): Layer2 {
       ...common.display,
       ...templateVars.display,
       warning: templateVars.display.warning,
-      liveness: ifPostsToEthereum(templateVars, {
-        warnings: {
-          stateUpdates: OPTIMISTIC_ROLLUP_STATE_UPDATES_WARNING,
-        },
-        explanation: `${
-          templateVars.display.name
-        } is an Optimistic rollup that posts transaction data to the L1. For a transaction to be considered final, it has to be posted within a tx batch on L1 that links to a previous finalized batch. If the previous batch is missing, transaction finalization can be delayed up to ${formatSeconds(
-          HARDCODED.OPTIMISM.SEQUENCING_WINDOW_SECONDS,
-        )} or until it gets published. The state root gets finalized ${formatSeconds(
-          FINALIZATION_PERIOD_SECONDS,
-        )} after it has been posted.`,
-      }),
-      finality: ifPostsToEthereum(templateVars, {
-        warnings: {
-          timeToInclusion: {
-            sentiment: 'neutral',
-            value:
-              "It's assumed that transaction data batches are submitted sequentially.",
-          },
-        },
-        finalizationPeriod: FINALIZATION_PERIOD_SECONDS,
-      }),
+      liveness: getLiveness(templateVars),
+      finality: getFinality(templateVars),
     },
     config: {
       ...common.config,
-      trackedTxs: ifPostsToEthereum(
-        templateVars,
-        templateVars.nonTemplateTrackedTxs ?? [
-          {
-            uses: [
-              { type: 'liveness', subtype: 'batchSubmissions' },
-              { type: 'l2costs', subtype: 'batchSubmissions' },
-            ],
-            query: {
-              formula: 'transfer',
-              from: sequencerAddress,
-              to: sequencerInbox,
-              sinceTimestamp: templateVars.genesisTimestamp,
-            },
-          },
-          {
-            uses: [
-              { type: 'liveness', subtype: 'stateUpdates' },
-              { type: 'l2costs', subtype: 'stateUpdates' },
-            ],
-            query: {
-              formula: 'functionCall',
-              address: l2OutputOracle.address,
-              selector: '0x9aaab648',
-              functionSignature:
-                'function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1Blockhash, uint256 _l1BlockNumber)',
-              sinceTimestamp: new UnixTime(
-                l2OutputOracle.sinceTimestamp ??
-                  templateVars.genesisTimestamp.toNumber(),
-              ),
-            },
-          },
-        ],
-      ),
+      trackedTxs: getTrackedTxs(templateVars),
       finality: ifPostsToEthereum(templateVars, templateVars.finality),
     },
     upgradesAndGovernance: templateVars.upgradesAndGovernance,
@@ -760,19 +692,9 @@ function getRiskViewStateValidation(
 
   switch (fraudProofType) {
     case 'None': {
-      const l2OutputOracle =
-        templateVars.l2OutputOracle ??
-        templateVars.discovery.getContract('L2OutputOracle')
-
-      const FINALIZATION_PERIOD_SECONDS: number =
-        templateVars.discovery.getContractValue<number>(
-          l2OutputOracle.name,
-          'FINALIZATION_PERIOD_SECONDS',
-        )
-
       return {
         ...RISK_VIEW.STATE_NONE,
-        secondLine: formatChallengePeriod(FINALIZATION_PERIOD_SECONDS),
+        secondLine: formatChallengePeriod(getFinalizationPeriod(templateVars)),
       }
     }
     case 'Permissioned': {
@@ -794,35 +716,10 @@ function getRiskViewExitWindow(
   templateVars: OpStackConfigCommon,
 ): ScalingProjectRiskViewEntry {
   const portal = getOptimismPortal(templateVars)
-
-  let FINALIZATION_PERIOD_SECONDS: number = 0
-  const fraudProofType = getFraudProofType(templateVars)
-  switch (fraudProofType) {
-    case 'None': {
-      const l2OutputOracle =
-        templateVars.l2OutputOracle ??
-        templateVars.discovery.getContract('L2OutputOracle')
-
-      FINALIZATION_PERIOD_SECONDS =
-        templateVars.discovery.getContractValue<number>(
-          l2OutputOracle.name,
-          'FINALIZATION_PERIOD_SECONDS',
-        )
-      break
-    }
-    case 'Permissioned':
-    case 'Permissionless': {
-      FINALIZATION_PERIOD_SECONDS =
-        templateVars.discovery.getContractValue<number>(
-          'OptimismPortal2',
-          'proofMaturityDelaySeconds',
-        )
-      break
-    }
-  }
+  const finalizationPeriod = getFinalizationPeriod(templateVars)
 
   return {
-    ...RISK_VIEW.EXIT_WINDOW(0, FINALIZATION_PERIOD_SECONDS),
+    ...RISK_VIEW.EXIT_WINDOW(0, finalizationPeriod),
     sources: [{ contract: portal.name, references: [] }],
   }
 }
@@ -1117,10 +1014,7 @@ function getTechnologyExitMechanism(
         ...EXITS.REGULAR(
           'optimistic',
           'merkle proof',
-          templateVars.discovery.getContractValue<number>(
-            'L2OutputOracle',
-            'FINALIZATION_PERIOD_SECONDS',
-          ),
+          getFinalizationPeriod(templateVars),
         ),
         references: explorerReferences(explorerUrl, [
           {
@@ -1260,6 +1154,102 @@ function getDAProvider(
   return daProvider
 }
 
+function getLiveness(
+  templateVars: OpStackConfigCommon,
+): ProjectLivenessInfo | undefined {
+  const finalizationPeriod = getFinalizationPeriod(templateVars)
+
+  return ifPostsToEthereum(templateVars, {
+    warnings: {
+      stateUpdates: OPTIMISTIC_ROLLUP_STATE_UPDATES_WARNING,
+    },
+    explanation: `${
+      templateVars.display.name
+    } is an Optimistic rollup that posts transaction data to the L1. For a transaction to be considered final, it has to be posted within a tx batch on L1 that links to a previous finalized batch. If the previous batch is missing, transaction finalization can be delayed up to ${formatSeconds(
+      HARDCODED.OPTIMISM.SEQUENCING_WINDOW_SECONDS,
+    )} or until it gets published. The state root gets finalized ${formatSeconds(
+      finalizationPeriod,
+    )} after it has been posted.`,
+  })
+}
+
+function getFinality(
+  templateVars: OpStackConfigCommon,
+): Layer2FinalityDisplay | undefined {
+  const finalizationPeriod = getFinalizationPeriod(templateVars)
+
+  return ifPostsToEthereum(templateVars, {
+    warnings: {
+      timeToInclusion: {
+        sentiment: 'neutral',
+        value:
+          "It's assumed that transaction data batches are submitted sequentially.",
+      },
+    },
+    finalizationPeriod: finalizationPeriod,
+  })
+}
+
+function getTrackedTxs(
+  templateVars: OpStackConfigCommon,
+): Layer2TxConfig[] | undefined {
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None': {
+      const sequencerInbox = EthereumAddress(
+        templateVars.discovery.getContractValue(
+          'SystemConfig',
+          'sequencerInbox',
+        ),
+      )
+      const sequencerAddress = EthereumAddress(
+        templateVars.discovery.getContractValue('SystemConfig', 'batcherHash'),
+      )
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+
+      return ifPostsToEthereum(
+        templateVars,
+        templateVars.nonTemplateTrackedTxs ?? [
+          {
+            uses: [
+              { type: 'liveness', subtype: 'batchSubmissions' },
+              { type: 'l2costs', subtype: 'batchSubmissions' },
+            ],
+            query: {
+              formula: 'transfer',
+              from: sequencerAddress,
+              to: sequencerInbox,
+              sinceTimestamp: templateVars.genesisTimestamp,
+            },
+          },
+          {
+            uses: [
+              { type: 'liveness', subtype: 'stateUpdates' },
+              { type: 'l2costs', subtype: 'stateUpdates' },
+            ],
+            query: {
+              formula: 'functionCall',
+              address: l2OutputOracle.address,
+              selector: '0x9aaab648',
+              functionSignature:
+                'function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1Blockhash, uint256 _l1BlockNumber)',
+              sinceTimestamp: new UnixTime(
+                l2OutputOracle.sinceTimestamp ??
+                  templateVars.genesisTimestamp.toNumber(),
+              ),
+            },
+          },
+        ],
+      )
+    }
+    case 'Permissioned':
+    case 'Permissionless':
+      return undefined
+  }
+}
+
 function ifPostsToEthereum<T>(
   templateVars: OpStackConfigCommon,
   value: T,
@@ -1278,6 +1268,30 @@ function getOptimismPortal(
     return templateVars.discovery.getContract('OptimismPortal')
   } catch {
     return templateVars.discovery.getContract('OptimismPortal2')
+  }
+}
+
+function getFinalizationPeriod(templateVars: OpStackConfigCommon): number {
+  const fraudProofType = getFraudProofType(templateVars)
+
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+
+      return templateVars.discovery.getContractValue<number>(
+        l2OutputOracle.name,
+        'FINALIZATION_PERIOD_SECONDS',
+      )
+    }
+    case 'Permissioned':
+    case 'Permissionless': {
+      return templateVars.discovery.getContractValue<number>(
+        'OptimismPortal2',
+        'proofMaturityDelaySeconds',
+      )
+    }
   }
 }
 
