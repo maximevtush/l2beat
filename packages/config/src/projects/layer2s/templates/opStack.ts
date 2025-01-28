@@ -830,13 +830,21 @@ function getRiskViewExitWindow(
 function getRiskViewProposerFailure(
   templateVars: OpStackConfigCommon,
 ): ScalingProjectRiskViewEntry {
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
-
-  return {
-    ...RISK_VIEW.PROPOSER_CANNOT_WITHDRAW,
-    sources: [{ contract: l2OutputOracle.name, references: [] }],
+  const fraudProofType = getFraudProofType(templateVars)
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+      return {
+        ...RISK_VIEW.PROPOSER_CANNOT_WITHDRAW,
+        sources: [{ contract: l2OutputOracle.name, references: [] }],
+      }
+    }
+    case 'Permissioned':
+      return RISK_VIEW.PROPOSER_CANNOT_WITHDRAW
+    case 'Permissionless':
+      return RISK_VIEW.PROPOSER_SELF_PROPOSE_ROOTS
   }
 }
 
