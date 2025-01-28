@@ -38,7 +38,7 @@ const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
   HASHKEY: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/hashkeychain.toml',
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/hashkeychain.json.gz',
-  ]
+  ],
 }
 
 function OPSTACK(chain: SupportedOPStackChains): ScalingProjectStateDerivation {
