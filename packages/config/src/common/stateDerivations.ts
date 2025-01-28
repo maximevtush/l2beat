@@ -10,6 +10,7 @@ type SupportedOPStackChains =
   | 'HASHKEY'
   | 'ARENAZ'
   | 'SONEIUM'
+  | 'SWELL'
 type OPStackInfo = [string, string] // [config, genesis file]
 
 const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
@@ -48,6 +49,10 @@ const OPStackInfos: Record<SupportedOPStackChains, OPStackInfo> = {
   SONEIUM: [
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/soneium.toml',
     'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/soneium.json.zst',
+  ],
+  SWELL: [
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/configs/mainnet/swell.toml',
+    'https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/extra/genesis/mainnet/swell.json.zst',
   ],
 }
 
