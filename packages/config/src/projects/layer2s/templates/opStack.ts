@@ -200,10 +200,6 @@ function opStackCommon(
     ...(templateVars.nonTemplateOptimismPortalEscrowTokens ?? []),
   ]
 
-  const sequencerInbox = EthereumAddress(
-    templateVars.discovery.getContractValue('SystemConfig', 'sequencerInbox'),
-  )
-
   const daProvider = getDAProvider(templateVars)
   const postsToEthereum = daProvider === undefined
 
@@ -234,11 +230,7 @@ function opStackCommon(
       mode: DA_MODES.TRANSACTION_DATA_COMPRESSED,
     })
 
-  const portal =
-    templateVars.portal ?? templateVars.discovery.getContract('OptimismPortal')
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
+  const portal = getOptimismPortal(templateVars)
   const l1StandardBridgeEscrow =
     templateVars.l1StandardBridgeEscrow ??
     templateVars.discovery.getContract('L1StandardBridge').address
@@ -306,125 +298,7 @@ function opStackCommon(
         ...(templateVars.nonTemplateEscrows ?? []),
       ],
     },
-    technology: {
-      stateCorrectness: templateVars.nonTemplateTechnology
-        ?.stateCorrectness ?? {
-        name: 'Fraud proofs are not enabled',
-        description:
-          'OP Stack projects can use the OP fault proof system, already being deployed on some. This project though is not using fault proofs yet and is relying on the honesty of the permissioned Proposer and Challengers to ensure state correctness. The smart contract system permits invalid state roots.',
-        risks: [
-          {
-            category: 'Funds can be stolen if',
-            text: 'an invalid state root is submitted to the system.',
-            isCritical: true,
-          },
-        ],
-        references: explorerReferences(explorerUrl, [
-          {
-            text: 'L2OutputOracle.sol - source code, deleteL2Outputs function',
-            address: safeGetImplementation(l2OutputOracle),
-          },
-        ]),
-      },
-      dataAvailability: templateVars.nonTemplateTechnology
-        ?.dataAvailability ?? {
-        ...technologyDA(daProvider, usesBlobs),
-        references: [
-          ...technologyDA(daProvider, usesBlobs).references,
-          {
-            text: 'Derivation: Batch submission - OP Mainnet specs',
-            href: 'https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/derivation.md#batch-submission',
-          },
-          ...explorerReferences(explorerUrl, [
-            { text: 'BatchInbox - address', address: sequencerInbox },
-            {
-              text: 'OptimismPortal.sol - source code, depositTransaction function',
-              address: safeGetImplementation(portal),
-            },
-          ]),
-        ],
-      },
-      operator: templateVars.nonTemplateTechnology?.operator ?? {
-        ...OPERATOR.CENTRALIZED_OPERATOR,
-        references: explorerReferences(explorerUrl, [
-          {
-            text: 'L2OutputOracle.sol - source code, CHALLENGER address',
-            address: safeGetImplementation(l2OutputOracle),
-          },
-          {
-            text: 'L2OutputOracle.sol - source code, PROPOSER address',
-            address: safeGetImplementation(l2OutputOracle),
-          },
-        ]),
-      },
-      forceTransactions: templateVars.nonTemplateTechnology
-        ?.forceTransactions ?? {
-        ...FORCE_TRANSACTIONS.CANONICAL_ORDERING('smart contract'),
-        references: [
-          {
-            text: 'Sequencing Window - OP Mainnet Specs',
-            href: 'https://github.com/ethereum-optimism/optimism/blob/51eeb76efeb32b3df3e978f311188aa29f5e3e94/specs/glossary.md#sequencing-window',
-          },
-          ...explorerReferences(explorerUrl, [
-            {
-              text: 'OptimismPortal.sol - source code, depositTransaction function',
-              address: safeGetImplementation(portal),
-            },
-          ]),
-        ],
-      },
-      exitMechanisms: templateVars.nonTemplateTechnology?.exitMechanisms ?? [
-        {
-          ...EXITS.REGULAR(
-            'optimistic',
-            'merkle proof',
-            templateVars.discovery.getContractValue<number>(
-              'L2OutputOracle',
-              'FINALIZATION_PERIOD_SECONDS',
-            ),
-          ),
-          references: explorerReferences(explorerUrl, [
-            {
-              text: 'OptimismPortal.sol - source code, proveWithdrawalTransaction function',
-              address: safeGetImplementation(portal),
-            },
-            {
-              text: 'OptimismPortal.sol - source code, finalizeWithdrawalTransaction function',
-              address: safeGetImplementation(portal),
-            },
-            {
-              text: 'L2OutputOracle.sol - source code, PROPOSER check',
-              address: safeGetImplementation(l2OutputOracle),
-            },
-          ]),
-          risks: [EXITS.RISK_CENTRALIZED_VALIDATOR],
-        },
-        {
-          ...EXITS.FORCED('all-withdrawals'),
-          references: [
-            {
-              text: 'Forced withdrawal from an OP Stack blockchain',
-              href: 'https://stack.optimism.io/docs/security/forced-withdrawal/',
-            },
-          ],
-        },
-      ],
-      otherConsiderations: templateVars.nonTemplateTechnology
-        ?.otherConsiderations ?? [
-        {
-          name: 'EVM compatible smart contracts are supported',
-          description:
-            'OP stack chains are pursuing the EVM Equivalence model. No changes to smart contracts are required regardless of the language they are written in, i.e. anything deployed on L1 can be deployed on L2.',
-          risks: [],
-          references: [
-            {
-              text: 'Introducing EVM Equivalence',
-              href: 'https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306',
-            },
-          ],
-        },
-      ],
-    },
+    technology: getTechnology(templateVars, explorerUrl),
     permissions: discoveryDrivenSections
       ? discoveryDrivenSections.permissions
       : [
@@ -625,29 +499,14 @@ function getRiskView(
   daProvider: DAProvider | undefined,
   portal: ContractParameters,
 ): ScalingProjectRiskView {
-  const FINALIZATION_PERIOD_SECONDS: number =
-    templateVars.discovery.getContractValue<number>(
-      'L2OutputOracle',
-      'FINALIZATION_PERIOD_SECONDS',
-    )
-
-  const l2OutputOracle =
-    templateVars.l2OutputOracle ??
-    templateVars.discovery.getContract('L2OutputOracle')
-
   return {
-    stateValidation: {
-      ...RISK_VIEW.STATE_NONE,
-      secondLine: formatChallengePeriod(FINALIZATION_PERIOD_SECONDS),
-    },
+    stateValidation: getRiskViewStateValidation(templateVars),
+    exitWindow: getRiskViewExitWindow(templateVars),
+    proposerFailure: getRiskViewProposerFailure(templateVars),
     dataAvailability: {
       ...(daProvider === undefined
         ? RISK_VIEW.DATA_ON_CHAIN
         : daProvider.riskView),
-      sources: [{ contract: portal.name, references: [] }],
-    },
-    exitWindow: {
-      ...RISK_VIEW.EXIT_WINDOW(0, FINALIZATION_PERIOD_SECONDS),
       sources: [{ contract: portal.name, references: [] }],
     },
     sequencerFailure: {
@@ -659,10 +518,77 @@ function getRiskView(
       secondLine: formatDelay(HARDCODED.OPTIMISM.SEQUENCING_WINDOW_SECONDS),
       sources: [{ contract: portal.name, references: [] }],
     },
-    proposerFailure: {
-      ...RISK_VIEW.PROPOSER_CANNOT_WITHDRAW,
-      sources: [{ contract: l2OutputOracle.name, references: [] }],
-    },
+  }
+}
+
+function getRiskViewStateValidation(
+  templateVars: OpStackConfigCommon,
+): ScalingProjectRiskViewEntry {
+  const fraudProofType = getFraudProofType(templateVars)
+
+  switch (fraudProofType) {
+    case 'None': {
+      const l2OutputOracle =
+        templateVars.l2OutputOracle ??
+        templateVars.discovery.getContract('L2OutputOracle')
+
+      const FINALIZATION_PERIOD_SECONDS: number =
+        templateVars.discovery.getContractValue<number>(
+          l2OutputOracle.name,
+          'FINALIZATION_PERIOD_SECONDS',
+        )
+
+      return {
+        ...RISK_VIEW.STATE_NONE,
+        secondLine: formatChallengePeriod(FINALIZATION_PERIOD_SECONDS),
+      }
+    }
+    case 'Permissioned': {
+      return {
+        ...RISK_VIEW.STATE_FP_INT,
+        description:
+          RISK_VIEW.STATE_FP_INT.description +
+          ` Only one entity is currently allowed to propose and submit challenges, as only permissioned games are currently allowed.`,
+        sentiment: 'bad',
+      }
+    }
+    case 'Permissionless': {
+      return RISK_VIEW.STATE_FP_INT
+    }
+  }
+}
+
+function getRiskViewExitWindow(
+  templateVars: OpStackConfigCommon,
+): ScalingProjectRiskViewEntry {
+  const portal = getOptimismPortal(templateVars)
+
+  const l2OutputOracle =
+    templateVars.l2OutputOracle ??
+    templateVars.discovery.getContract('L2OutputOracle')
+
+  const FINALIZATION_PERIOD_SECONDS: number =
+    templateVars.discovery.getContractValue<number>(
+      l2OutputOracle.name,
+      'FINALIZATION_PERIOD_SECONDS',
+    )
+
+  return {
+    ...RISK_VIEW.EXIT_WINDOW(0, FINALIZATION_PERIOD_SECONDS),
+    sources: [{ contract: portal.name, references: [] }],
+  }
+}
+
+function getRiskViewProposerFailure(
+  templateVars: OpStackConfigCommon,
+): ScalingProjectRiskViewEntry {
+  const l2OutputOracle =
+    templateVars.l2OutputOracle ??
+    templateVars.discovery.getContract('L2OutputOracle')
+
+  return {
+    ...RISK_VIEW.PROPOSER_CANNOT_WITHDRAW,
+    sources: [{ contract: l2OutputOracle.name, references: [] }],
   }
 }
 
@@ -674,6 +600,8 @@ function computedStage(
     return { stage: 'NotApplicable' }
   }
 
+  // TODO(radomski): proof system requirement should be checked as met (A complete and functional proof system is deployed.
+  // TODO(radomski): external actors submitting proofs requirement should be checked (There are at least 5 external actors who can submit fraud proofs.
   return getStage(
     {
       stage0: {
@@ -704,6 +632,148 @@ function computedStage(
           : '',
     },
   )
+}
+
+function getTechnology(
+  templateVars: OpStackConfigCommon,
+  explorerUrl: string | undefined,
+): ScalingProjectTechnology {
+  const daProvider = getDAProvider(templateVars)
+  const sequencerInbox = EthereumAddress(
+    templateVars.discovery.getContractValue('SystemConfig', 'sequencerInbox'),
+  )
+
+  const portal = getOptimismPortal(templateVars)
+  const l2OutputOracle =
+    templateVars.l2OutputOracle ??
+    templateVars.discovery.getContract('L2OutputOracle')
+
+  const usesBlobs =
+    templateVars.usesBlobs ??
+    templateVars.discovery.getContractValue<{
+      isSequencerSendingBlobTx: boolean
+    }>('SystemConfig', 'opStackDA').isSequencerSendingBlobTx
+
+  // TODO(radomski): state validation part should be the same as it is for Optimism right now, including warning and references
+  // TODO(radomski): There should be a State validation section, the same as for Optimism, including the diagram
+  // TODO(radomski): Regular exits should look like Optimism
+  return {
+    stateCorrectness: templateVars.nonTemplateTechnology?.stateCorrectness ?? {
+      name: 'Fraud proofs are not enabled',
+      description:
+        'OP Stack projects can use the OP fault proof system, already being deployed on some. This project though is not using fault proofs yet and is relying on the honesty of the permissioned Proposer and Challengers to ensure state correctness. The smart contract system permits invalid state roots.',
+      risks: [
+        {
+          category: 'Funds can be stolen if',
+          text: 'an invalid state root is submitted to the system.',
+          isCritical: true,
+        },
+      ],
+      references: explorerReferences(explorerUrl, [
+        {
+          text: 'L2OutputOracle.sol - source code, deleteL2Outputs function',
+          address: safeGetImplementation(l2OutputOracle),
+        },
+      ]),
+    },
+    dataAvailability: templateVars.nonTemplateTechnology?.dataAvailability ?? {
+      ...technologyDA(daProvider, usesBlobs),
+      references: [
+        ...technologyDA(daProvider, usesBlobs).references,
+        {
+          text: 'Derivation: Batch submission - OP Mainnet specs',
+          href: 'https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/derivation.md#batch-submission',
+        },
+        ...explorerReferences(explorerUrl, [
+          { text: 'BatchInbox - address', address: sequencerInbox },
+          {
+            text: 'OptimismPortal.sol - source code, depositTransaction function',
+            address: safeGetImplementation(portal),
+          },
+        ]),
+      ],
+    },
+    operator: templateVars.nonTemplateTechnology?.operator ?? {
+      ...OPERATOR.CENTRALIZED_OPERATOR,
+      references: explorerReferences(explorerUrl, [
+        {
+          text: 'L2OutputOracle.sol - source code, CHALLENGER address',
+          address: safeGetImplementation(l2OutputOracle),
+        },
+        {
+          text: 'L2OutputOracle.sol - source code, PROPOSER address',
+          address: safeGetImplementation(l2OutputOracle),
+        },
+      ]),
+    },
+    forceTransactions: templateVars.nonTemplateTechnology
+      ?.forceTransactions ?? {
+      ...FORCE_TRANSACTIONS.CANONICAL_ORDERING('smart contract'),
+      references: [
+        {
+          text: 'Sequencing Window - OP Mainnet Specs',
+          href: 'https://github.com/ethereum-optimism/optimism/blob/51eeb76efeb32b3df3e978f311188aa29f5e3e94/specs/glossary.md#sequencing-window',
+        },
+        ...explorerReferences(explorerUrl, [
+          {
+            text: 'OptimismPortal.sol - source code, depositTransaction function',
+            address: safeGetImplementation(portal),
+          },
+        ]),
+      ],
+    },
+    exitMechanisms: templateVars.nonTemplateTechnology?.exitMechanisms ?? [
+      {
+        ...EXITS.REGULAR(
+          'optimistic',
+          'merkle proof',
+          templateVars.discovery.getContractValue<number>(
+            'L2OutputOracle',
+            'FINALIZATION_PERIOD_SECONDS',
+          ),
+        ),
+        references: explorerReferences(explorerUrl, [
+          {
+            text: 'OptimismPortal.sol - source code, proveWithdrawalTransaction function',
+            address: safeGetImplementation(portal),
+          },
+          {
+            text: 'OptimismPortal.sol - source code, finalizeWithdrawalTransaction function',
+            address: safeGetImplementation(portal),
+          },
+          {
+            text: 'L2OutputOracle.sol - source code, PROPOSER check',
+            address: safeGetImplementation(l2OutputOracle),
+          },
+        ]),
+        risks: [EXITS.RISK_CENTRALIZED_VALIDATOR],
+      },
+      {
+        ...EXITS.FORCED('all-withdrawals'),
+        references: [
+          {
+            text: 'Forced withdrawal from an OP Stack blockchain',
+            href: 'https://stack.optimism.io/docs/security/forced-withdrawal/',
+          },
+        ],
+      },
+    ],
+    otherConsiderations: templateVars.nonTemplateTechnology
+      ?.otherConsiderations ?? [
+      {
+        name: 'EVM compatible smart contracts are supported',
+        description:
+          'OP stack chains are pursuing the EVM Equivalence model. No changes to smart contracts are required regardless of the language they are written in, i.e. anything deployed on L1 can be deployed on L2.',
+        risks: [],
+        references: [
+          {
+            text: 'Introducing EVM Equivalence',
+            href: 'https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306',
+          },
+        ],
+      },
+    ],
+  }
 }
 
 function decideDA(
@@ -765,4 +835,40 @@ function ifPostsToEthereum<T>(
   value: T,
 ): T | undefined {
   return getDAProvider(templateVars) === undefined ? value : undefined
+}
+
+function getOptimismPortal(
+  templateVars: OpStackConfigCommon,
+): ContractParameters {
+  if (templateVars.portal !== undefined) {
+    return templateVars.portal
+  }
+
+  try {
+    return templateVars.discovery.getContract('OptimismPortal')
+  } catch {
+    return templateVars.discovery.getContract('OptimismPortal2')
+  }
+}
+
+type FraudProofType = 'None' | 'Permissioned' | 'Permissionless'
+
+function getFraudProofType(templateVars: OpStackConfigCommon): FraudProofType {
+  const portal = getOptimismPortal(templateVars)
+  if (portal.name === 'OptimismPortal') {
+    return 'None'
+  }
+
+  const respectedGameType = templateVars.discovery.getContractValue<number>(
+    portal.name,
+    'respectedGameType',
+  )
+
+  if (respectedGameType === 0) {
+    return 'Permissioned'
+  } else if (respectedGameType === 1) {
+    return 'Permissionless'
+  } else {
+    throw new Error(`Unexpected respectedGameType = ${respectedGameType}`)
+  }
 }
